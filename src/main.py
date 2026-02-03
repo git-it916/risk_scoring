@@ -24,16 +24,19 @@ class CISSPipeline:
     def __init__(self,
                  start_date: str = '2024-01-01',
                  end_date: str = None,
-                 dcc_method: str = 'ewma'):
+                 dcc_method: str = 'ewma',
+                 frequency: str = 'daily'):
         """
         Args:
             start_date: 시작일
             end_date: 종료일 (None = 오늘)
             dcc_method: 'dcc' (full DCC-GARCH) 또는 'ewma'
+            frequency: 'daily' (일간) 또는 'weekly' (주간, 금요일 기준)
         """
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
         self.dcc_method = dcc_method
+        self.frequency = frequency
 
         # 결과 저장
         self.daily_data = None
@@ -66,15 +69,23 @@ class CISSPipeline:
             print(f"  - Daily: {len(self.daily_data)} rows")
             print(f"  - Weekly: {len(self.weekly_data)} rows")
 
+        # 주기에 따라 사용할 데이터 선택
+        if self.frequency == 'daily':
+            data_for_indicators = self.daily_data
+            freq_label = 'days'
+        else:
+            data_for_indicators = self.weekly_data
+            freq_label = 'weeks'
+
         # Step 2: 지표 변환
         if verbose:
-            print("\n[Step 2/4] Computing indicators...")
+            print(f"\n[Step 2/4] Computing indicators ({self.frequency})...")
         self.raw_indicators, self.ecdf_indicators = compute_indicators(
-            self.weekly_data
+            data_for_indicators
         )
         if verbose:
             print(f"  - Indicators: {self.ecdf_indicators.shape[1]} columns")
-            print(f"  - Observations: {len(self.ecdf_indicators)} weeks")
+            print(f"  - Observations: {len(self.ecdf_indicators)} {freq_label}")
 
         # Step 3: DCC-GARCH 상관행렬
         if verbose:
@@ -143,6 +154,34 @@ class CISSPipeline:
         self.ecdf_indicators.to_csv(ecdf_path, encoding='utf-8-sig')
         print(f"[INFO] ECDF indicators saved to: {ecdf_path}")
 
+        # Historical CISS 누적 저장
+        self._save_historical_ciss(output_dir)
+
+    def _save_historical_ciss(self, output_dir: str):
+        """CISS 점수 누적 저장 (중복 날짜는 최신값으로 업데이트)"""
+        historical_path = os.path.join(output_dir, 'historical_ciss.csv')
+
+        # 저장할 컬럼만 선택
+        cols_to_save = ['CISS', 'Correlation_Effect',
+                        'Money_Market_Contribution', 'Bond_Market_Contribution',
+                        'Equity_Market_Contribution', 'FX_Market_Contribution',
+                        'Financial_Intermediaries_Contribution']
+        new_data = self.ciss_result[cols_to_save].copy()
+
+        if os.path.exists(historical_path):
+            # 기존 데이터 로드
+            existing = pd.read_csv(historical_path, index_col=0, parse_dates=True)
+            # 새 데이터와 병합 (중복 날짜는 새 데이터로 덮어씀)
+            combined = pd.concat([existing, new_data])
+            combined = combined[~combined.index.duplicated(keep='last')]
+            combined = combined.sort_index()
+        else:
+            combined = new_data
+
+        # 저장
+        combined.to_csv(historical_path, encoding='utf-8-sig')
+        print(f"[INFO] Historical CISS saved to: {historical_path} ({len(combined)} records)")
+
     def print_summary(self):
         """결과 요약 출력"""
         if self.ciss_result is None:
@@ -191,7 +230,8 @@ def main():
     # 파이프라인 생성 및 실행
     pipeline = CISSPipeline(
         start_date='2024-01-01',
-        dcc_method='ewma'
+        dcc_method='ewma',
+        frequency='daily'  # 'daily' 또는 'weekly'
     )
 
     # 실행
