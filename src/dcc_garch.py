@@ -36,8 +36,19 @@ class DCCEstimator:
         Args:
             method: 'dcc' (full DCC-GARCH), 'ewma' (exponential weighted), 'auto'
         """
+        valid_methods = {'auto', 'dcc', 'ewma'}
+        if method not in valid_methods:
+            raise ValueError(
+                f"Invalid method '{method}'. Choose one of: {sorted(valid_methods)}."
+            )
+
         if method == 'auto':
             self.method = 'dcc' if HAS_ARCH else 'ewma'
+        elif method == 'dcc' and not HAS_ARCH:
+            raise ImportError(
+                "method='dcc' requested but 'arch' library is not installed. "
+                "Install it with `pip install arch` or set method='ewma'."
+            )
         else:
             self.method = method
 
@@ -52,10 +63,14 @@ class DCCEstimator:
         Args:
             df: ECDF 변환된 지표 데이터
         """
-        if self.method == 'dcc' and HAS_ARCH:
+        if self.method == 'dcc':
+            if not HAS_ARCH:
+                raise RuntimeError(
+                    "method='dcc' cannot run because 'arch' is unavailable."
+                )
             return self._fit_dcc(df)
-        else:
-            return self._fit_ewma(df)
+
+        return self._fit_ewma(df)
 
     def get_correlation_matrix(self, t: int = -1) -> pd.DataFrame:
         """

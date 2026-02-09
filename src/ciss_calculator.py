@@ -1,229 +1,248 @@
 # -*- coding: utf-8 -*-
 """
 CISS Risk Scoring - CISS Calculator Module
-============================================
-Composite Indicator of Systemic Stress 계산
+=========================================
+Compute Composite Indicator of Systemic Stress (CISS).
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, List, Tuple
 
 
 class CISSCalculator:
     """
-    CISS (Composite Indicator of Systemic Stress) 계산
+    CISS (Composite Indicator of Systemic Stress) calculator.
 
-    CISS 공식 (ECB 원본):
-        CISS_t = (s_t' * w) * (w' * C_t * w)
+    Formula:
+        CISS_t = (w' * s_t) * sqrt(w' * C_t * w)
 
-    여기서:
-        - s_t: ECDF 변환된 지표 벡터 (15 x 1)
-        - w: 섹터 가중치 벡터
-        - C_t: 시변 상관행렬 (DCC-GARCH)
-
-    상관 증폭 효과:
-        - 지표들 간 상관이 높을수록 CISS 값 증가
-        - 시스템 리스크의 동시 발생(contagion) 반영
+    where:
+        - s_t: ECDF-normalized indicator vector
+        - w: indicator weight vector
+        - C_t: dynamic correlation matrix
     """
 
-    # 섹터별 지표 매핑
     SECTOR_INDICATORS = {
-        'Money_Market': ['MM1', 'MM2', 'MM3'],
-        'Bond_Market': ['BD1', 'BD2', 'BD3'],
-        'Equity_Market': ['EQ1', 'EQ2', 'EQ3'],
-        'FX_Market': ['FX1', 'FX2', 'FX3'],
-        'Financial_Intermediaries': ['FI1', 'FI2', 'FI3'],
+        "Money_Market": ["MM1", "MM2", "MM3"],
+        "Bond_Market": ["BD1", "BD2", "BD3"],
+        "Equity_Market": ["EQ1", "EQ2", "EQ3"],
+        "FX_Market": ["FX1", "FX2", "FX3"],
+        "Financial_Intermediaries": ["FI1", "FI2", "FI3"],
     }
 
-    # 섹터 가중치 (균등)
     SECTOR_WEIGHTS = {
-        'Money_Market': 0.20,
-        'Bond_Market': 0.20,
-        'Equity_Market': 0.20,
-        'FX_Market': 0.20,
-        'Financial_Intermediaries': 0.20,
+        "Money_Market": 0.20,
+        "Bond_Market": 0.20,
+        "Equity_Market": 0.20,
+        "FX_Market": 0.20,
+        "Financial_Intermediaries": 0.20,
     }
 
     def __init__(self, sector_weights: Optional[Dict[str, float]] = None):
-        """
-        Args:
-            sector_weights: 섹터별 가중치 (기본값: 균등 20%)
-        """
-        self.sector_weights = sector_weights or self.SECTOR_WEIGHTS
+        self.sector_weights = (sector_weights or self.SECTOR_WEIGHTS).copy()
         self._validate_weights()
 
-    def _validate_weights(self):
-        """가중치 합계 검증"""
-        total = sum(self.sector_weights.values())
+    def _validate_weights(self) -> None:
+        """Validate and normalize sector weights."""
+        expected = set(self.SECTOR_INDICATORS.keys())
+        actual = set(self.sector_weights.keys())
+        if actual != expected:
+            missing = sorted(expected - actual)
+            extra = sorted(actual - expected)
+            details = []
+            if missing:
+                details.append(f"missing keys: {missing}")
+            if extra:
+                details.append(f"unknown keys: {extra}")
+            raise ValueError("Invalid sector_weights keys: " + ", ".join(details))
+
+        total = float(sum(self.sector_weights.values()))
         if not np.isclose(total, 1.0):
             print(f"[WARN] Sector weights sum to {total}, normalizing to 1.0")
-            for k in self.sector_weights:
-                self.sector_weights[k] /= total
+            for key in self.sector_weights:
+                self.sector_weights[key] /= total
+
+    def _build_indicator_layout(
+        self, ecdf_data: pd.DataFrame
+    ) -> Tuple[List[str], np.ndarray, Dict[str, np.ndarray]]:
+        """
+        Build indicator order, normalized indicator weights, and sector masks.
+        Fails fast if required indicators are missing.
+        """
+        if ecdf_data.empty:
+            raise ValueError("ecdf_data is empty; cannot compute CISS.")
+
+        missing = []
+        for sector, indicators in self.SECTOR_INDICATORS.items():
+            for ind in indicators:
+                if ind not in ecdf_data.columns:
+                    missing.append(f"{sector}:{ind}")
+
+        if missing:
+            raise ValueError(
+                "Missing required indicators for CISS calculation: "
+                + ", ".join(missing)
+            )
+
+        indicator_order: List[str] = []
+        indicator_weights: List[float] = []
+        indicator_sectors: List[str] = []
+
+        for sector, indicators in self.SECTOR_INDICATORS.items():
+            weight_per_indicator = self.sector_weights[sector] / len(indicators)
+            for ind in indicators:
+                indicator_order.append(ind)
+                indicator_weights.append(weight_per_indicator)
+                indicator_sectors.append(sector)
+
+        w = np.array(indicator_weights, dtype=float)
+        w = w / w.sum()
+
+        sector_masks: Dict[str, np.ndarray] = {}
+        for sector in self.SECTOR_INDICATORS:
+            sector_masks[sector] = np.array(
+                [ind_sector == sector for ind_sector in indicator_sectors],
+                dtype=bool,
+            )
+
+        return indicator_order, w, sector_masks
 
     def compute_sector_indices(self, ecdf_data: pd.DataFrame) -> pd.DataFrame:
         """
-        섹터별 스트레스 지수 계산 (단순 평균)
-
-        Args:
-            ecdf_data: ECDF 변환된 15개 지표
-
-        Returns:
-            5개 섹터 지수 DataFrame
+        Compute sector-level stress indices as simple means of indicators.
+        Strictly requires all indicators to exist.
         """
-        sector_indices = pd.DataFrame(index=ecdf_data.index)
+        self._build_indicator_layout(ecdf_data)
 
+        sector_indices = pd.DataFrame(index=ecdf_data.index)
         for sector, indicators in self.SECTOR_INDICATORS.items():
-            available = [ind for ind in indicators if ind in ecdf_data.columns]
-            if available:
-                sector_indices[sector] = ecdf_data[available].mean(axis=1)
-            else:
-                print(f"[WARN] No indicators for {sector}")
-                sector_indices[sector] = 0.5
+            sector_indices[sector] = ecdf_data[indicators].mean(axis=1)
 
         return sector_indices
 
-    def compute_ciss(self,
-                     ecdf_data: pd.DataFrame,
-                     correlations: np.ndarray) -> pd.DataFrame:
+    def compute_ciss(
+        self, ecdf_data: pd.DataFrame, correlations: np.ndarray
+    ) -> pd.DataFrame:
         """
-        CISS 종합 지수 계산
+        Compute full CISS using dynamic correlation matrices.
 
         Args:
-            ecdf_data: ECDF 변환된 15개 지표 (T x 15)
-            correlations: 동적 상관행렬 (T x 15 x 15)
+            ecdf_data: ECDF-normalized indicators, shape (T, 15)
+            correlations: Dynamic correlation matrices, shape (T, 15, 15)
 
         Returns:
-            CISS 결과 DataFrame (CISS, 섹터별 기여도)
+            DataFrame with CISS, Correlation_Effect, and sector contributions.
         """
-        T = len(ecdf_data)
-        n = ecdf_data.shape[1]
+        indicator_order, w, sector_masks = self._build_indicator_layout(ecdf_data)
+        ecdf_ordered = ecdf_data[indicator_order]
 
-        # 지표 순서 맞추기
-        indicator_order = []
-        for sector in self.SECTOR_INDICATORS:
-            indicator_order.extend(self.SECTOR_INDICATORS[sector])
+        T = len(ecdf_ordered)
+        n = len(w)
 
-        # ecdf_data를 지표 순서로 정렬
-        available_indicators = [ind for ind in indicator_order if ind in ecdf_data.columns]
-        ecdf_ordered = ecdf_data[available_indicators]
+        if correlations is None:
+            raise ValueError("correlations cannot be None in compute_ciss().")
+        if correlations.ndim != 3:
+            raise ValueError(
+                f"correlations must be 3D (T x N x N), got ndim={correlations.ndim}"
+            )
+        if correlations.shape[0] != T:
+            raise ValueError(
+                "Time dimension mismatch between ecdf_data and correlations: "
+                f"T_ecdf={T}, T_corr={correlations.shape[0]}"
+            )
+        if correlations.shape[1] != n or correlations.shape[2] != n:
+            raise ValueError(
+                "Correlation matrix dimension mismatch: "
+                f"expected ({n}, {n}), got "
+                f"({correlations.shape[1]}, {correlations.shape[2]})."
+            )
 
-        # 가중치 벡터 구성 (지표별)
-        indicator_weights = []
-        for sector in self.SECTOR_INDICATORS:
-            sector_w = self.sector_weights[sector]
-            n_indicators = len([ind for ind in self.SECTOR_INDICATORS[sector]
-                               if ind in available_indicators])
-            if n_indicators > 0:
-                w_per_indicator = sector_w / n_indicators
-                for ind in self.SECTOR_INDICATORS[sector]:
-                    if ind in available_indicators:
-                        indicator_weights.append(w_per_indicator)
-
-        w = np.array(indicator_weights)
-        w = w / w.sum()  # 정규화
-
-        # CISS 계산
         ciss_values = np.zeros(T)
         correlation_effect = np.zeros(T)
+        sector_contributions = {
+            sector: np.zeros(T) for sector in self.SECTOR_INDICATORS
+        }
 
         for t in range(T):
             s_t = ecdf_ordered.iloc[t].values
+            C_t = correlations[t]
 
-            # 상관행렬 (지표 수에 맞게 조정)
-            if correlations.shape[1] == len(w):
-                C_t = correlations[t]
-            else:
-                # 상관행렬 크기 불일치 시 단위행렬 사용
-                C_t = np.eye(len(w))
+            weighted_stress = s_t * w
+            portfolio_var = float(w @ C_t @ w)
+            correlation_effect[t] = np.sqrt(max(portfolio_var, 0.0))
 
-            # CISS = (s' * w) * sqrt(w' * C * w)
-            # 또는 포트폴리오 분산 형태: w' * diag(s) * C * diag(s) * w
-            s_weighted = s_t * w
-            portfolio_var = w @ C_t @ w
-            correlation_effect[t] = np.sqrt(portfolio_var)
+            ciss_values[t] = float(np.sum(weighted_stress) * correlation_effect[t])
 
-            # 최종 CISS (상관 증폭 반영)
-            ciss_values[t] = np.sum(s_weighted) * correlation_effect[t]
+            for sector, mask in sector_masks.items():
+                sector_contributions[sector][t] = float(
+                    np.sum(weighted_stress[mask]) * correlation_effect[t]
+                )
 
-        # 결과 DataFrame
         result = pd.DataFrame(index=ecdf_data.index)
-        result['CISS'] = ciss_values
-        result['Correlation_Effect'] = correlation_effect
-
-        # 섹터별 기여도
-        sector_indices = self.compute_sector_indices(ecdf_data)
+        result["CISS"] = ciss_values
+        result["Correlation_Effect"] = correlation_effect
         for sector in self.SECTOR_INDICATORS:
-            result[f'{sector}_Contribution'] = (
-                sector_indices[sector] * self.sector_weights[sector]
-            )
+            result[f"{sector}_Contribution"] = sector_contributions[sector]
 
         return result
 
     def compute_simple_ciss(self, ecdf_data: pd.DataFrame) -> pd.DataFrame:
         """
-        간단한 CISS 계산 (상관행렬 없이)
-
-        상관행렬 추정이 어려운 경우 사용
-        단순 가중 평균 방식
+        Compute simple CISS without correlation effects.
         """
-        sector_indices = self.compute_sector_indices(ecdf_data)
+        indicator_order, _, _ = self._build_indicator_layout(ecdf_data)
+        ecdf_ordered = ecdf_data[indicator_order]
+
+        sector_contributions = pd.DataFrame(index=ecdf_data.index)
+        for sector, indicators in self.SECTOR_INDICATORS.items():
+            sector_contributions[sector] = (
+                ecdf_ordered[indicators].mean(axis=1) * self.sector_weights[sector]
+            )
 
         result = pd.DataFrame(index=ecdf_data.index)
-
-        # 가중 평균
-        ciss_simple = pd.Series(0.0, index=ecdf_data.index)
-        for sector, weight in self.sector_weights.items():
-            ciss_simple += sector_indices[sector] * weight
-
-        result['CISS_Simple'] = ciss_simple
-
-        # 섹터별 기여도
+        result["CISS_Simple"] = sector_contributions.sum(axis=1)
         for sector in self.SECTOR_INDICATORS:
-            result[f'{sector}_Contribution'] = (
-                sector_indices[sector] * self.sector_weights[sector]
-            )
+            result[f"{sector}_Contribution"] = sector_contributions[sector]
 
         return result
 
 
-def compute_ciss_score(ecdf_data: pd.DataFrame,
-                       correlations: np.ndarray,
-                       use_correlation: bool = True) -> pd.DataFrame:
+def compute_ciss_score(
+    ecdf_data: pd.DataFrame,
+    correlations: np.ndarray,
+    use_correlation: bool = True,
+) -> pd.DataFrame:
     """
-    CISS 스코어 계산 (편의 함수)
+    Convenience function for CISS score calculation.
 
     Args:
-        ecdf_data: ECDF 변환된 지표
-        correlations: 동적 상관행렬
-        use_correlation: 상관 증폭 효과 사용 여부
+        ecdf_data: ECDF-normalized indicators
+        correlations: Dynamic correlation matrices
+        use_correlation: Use correlation amplification effect if True
 
     Returns:
-        CISS 결과 DataFrame
+        CISS result DataFrame
     """
     calculator = CISSCalculator()
 
     if use_correlation and correlations is not None:
         return calculator.compute_ciss(ecdf_data, correlations)
-    else:
-        return calculator.compute_simple_ciss(ecdf_data)
+    return calculator.compute_simple_ciss(ecdf_data)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from data_loader import load_raw_data
     from transforms import compute_indicators
     from dcc_garch import compute_dynamic_correlations
 
-    # 데이터 로드
     daily, weekly = load_raw_data()
-    indicators, ecdf_data = compute_indicators(weekly)
+    _, ecdf_data = compute_indicators(weekly)
     correlations, _ = compute_dynamic_correlations(ecdf_data)
 
-    # CISS 계산
     ciss_result = compute_ciss_score(ecdf_data, correlations)
-
     print("\n[CISS Results]")
     print(ciss_result.tail(10))
 
     print("\n[Statistics]")
-    print(ciss_result['CISS'].describe())
+    print(ciss_result["CISS"].describe())

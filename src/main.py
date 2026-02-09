@@ -158,7 +158,7 @@ class CISSPipeline:
         self._save_historical_ciss(output_dir)
 
     def _save_historical_ciss(self, output_dir: str):
-        """CISS 점수 누적 저장 (중복 날짜는 최신값으로 업데이트)"""
+        """CISS 전체 기간 저장 (start_date ~ today)"""
         historical_path = os.path.join(output_dir, 'historical_ciss.csv')
 
         # 저장할 컬럼만 선택
@@ -166,21 +166,11 @@ class CISSPipeline:
                         'Money_Market_Contribution', 'Bond_Market_Contribution',
                         'Equity_Market_Contribution', 'FX_Market_Contribution',
                         'Financial_Intermediaries_Contribution']
-        new_data = self.ciss_result[cols_to_save].copy()
+        full_data = self.ciss_result[cols_to_save].copy()
 
-        if os.path.exists(historical_path):
-            # 기존 데이터 로드
-            existing = pd.read_csv(historical_path, index_col=0, parse_dates=True)
-            # 새 데이터와 병합 (중복 날짜는 새 데이터로 덮어씀)
-            combined = pd.concat([existing, new_data])
-            combined = combined[~combined.index.duplicated(keep='last')]
-            combined = combined.sort_index()
-        else:
-            combined = new_data
-
-        # 저장
-        combined.to_csv(historical_path, encoding='utf-8-sig')
-        print(f"[INFO] Historical CISS saved to: {historical_path} ({len(combined)} records)")
+        # 전체 기간 저장 (매번 새로 계산된 전체 데이터로 덮어씀)
+        full_data.to_csv(historical_path, encoding='utf-8-sig')
+        print(f"[INFO] Historical CISS saved to: {historical_path} ({len(full_data)} records)")
 
     def print_summary(self):
         """결과 요약 출력"""

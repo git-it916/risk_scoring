@@ -1,227 +1,160 @@
 # CISS Risk Scoring (Korea)
 
-한국 금융시장 기반 CISS(Composite Indicator of Systemic Stress) 리스크 스코어링 시스템
+이 프로젝트는 Bloomberg 시계열 데이터를 받아, 15개 스트레스 지표를 만든 뒤,  
+5개 분야(Money/Bond/Equity/FX/Financial Intermediaries)를 합쳐 최종 CISS를 계산합니다.
 
-## Overview
+핵심 질문 3개에 맞춰 문서를 구성했습니다.
+1. 어떤 데이터를 쓰는가?
+2. 그 데이터를 어떻게 가공하는가?
+3. 5개 분야를 어떻게 하나의 점수로 합치는가?
 
-ECB의 CISS 방법론을 한국 시장에 적용하여 시스템 리스크를 측정합니다.
+## 1) 어떤 데이터를 쓰는가
 
-- **데이터 소스**: Bloomberg Terminal
-- **주기**: Weekly (W-FRI)
-- **기간**: 2024-01-01 ~ 현재
+원천 데이터는 `src/data_loader.py`에서 Bloomberg BDH로 수집합니다.
 
----
+- 가격/금리 데이터: `PX_LAST` 12개
+- 거래량 데이터: `PX_VOLUME` 1개
+- 총 13개 raw 컬럼
 
-## 지표 구성 (5개 섹터 × 3개 = 15개)
+| Raw 컬럼명 | Bloomberg 티커/필드 | 주 사용 지표 |
+|---|---|---|
+| `KWCDC_Curncy` | `KWCDC Curncy / PX_LAST` | MM1, MM2, MM3, BD2 |
+| `GVSK3M_Index` | `GVSK3M Index / PX_LAST` | MM2 |
+| `GVSK3YR_Index` | `GVSK3YR Index / PX_LAST` | BD1, BD2 |
+| `GVSK10YR_Index` | `GVSK10YR Index / PX_LAST` | BD1 |
+| `MOVE_Index` | `MOVE Index / PX_LAST` | BD3 |
+| `KOSPI_Index` | `KOSPI Index / PX_LAST` | EQ1, EQ3, FI3 |
+| `KOSPI_Index_VOLUME` | `KOSPI Index / PX_VOLUME` | EQ3 |
+| `VKOSPI_Index` | `VKOSPI Index / PX_LAST` | EQ2 |
+| `USDKRW_Curncy` | `USDKRW Curncy / PX_LAST` | FX1 |
+| `USDKRWV1M_BGN_Curncy` | `USDKRWV1M BGN Curncy / PX_LAST` | FX2 |
+| `KWSWNI1_Curncy` | `KWSWNI1 Curncy / PX_LAST` | FX3 |
+| `CKREA1U5_CBGN_Curncy` | `CKREA1U5 CBGN Curncy / PX_LAST` | FI1 |
+| `KOSPFIN_Index` | `KOSPFIN Index / PX_LAST` | FI2, FI3 |
 
-### 1. 단기금융시장 (Money Market)
+추가 참고:
+- `xbbg`를 import하지 못하면 `mock data`로 대체됩니다(테스트용).
+- `load_raw_data()`는 일별과 주별(`W-FRI`) 데이터를 모두 준비합니다.
 
-| ID | 지표명 | 설명 | Bloomberg 티커 | 스트레스 방향 |
-|----|--------|------|----------------|--------------|
-| MM1 | CD금리 수준 | 91일 CD 금리 | `KWCDC Curncy` | 상승 ↑ |
-| MM2 | CD-국고채 스프레드 | CD금리 - 국고채 3개월 금리차 | `KWCDC` - `GVSK3M` | 확대 ↑ |
-| MM3 | CD금리 변동성 | CD금리 20일 실현변동성 | `KWCDC Curncy` | 상승 ↑ |
+## 2) 데이터를 어떻게 가공하는가
 
-### 2. 채권시장 (Bond Market)
+가공 코드는 `src/transforms.py`에 있습니다.
 
-| ID | 지표명 | 설명 | Bloomberg 티커 | 스트레스 방향 |
-|----|--------|------|----------------|--------------|
-| BD1 | 장단기 금리차 | 국고채 10년 - 3년 스프레드 | `GVSK10YR` - `GVSK3YR` | 축소/역전 ↓ |
-| BD2 | 신용 스프레드 | CD금리 - 국고채 3년 금리차 | `KWCDC` - `GVSK3YR` | 확대 ↑ |
-| BD3 | 채권 변동성 | MOVE 지수 (글로벌 채권 변동성) | `MOVE Index` | 상승 ↑ |
+### 2-1. 전처리
 
-### 3. 주식시장 (Equity Market)
+1. 날짜 정렬 및 병합: 로더에서 모든 티커를 날짜 인덱스로 정렬해 하나의 DataFrame으로 만듭니다.  
+2. 결측 보정: `ffill()`로 직전값을 채웁니다.  
+3. 지표 계산 후 `dropna()`: 수익률/롤링 윈도우 때문에 생기는 초반 결측 구간을 제거합니다.
 
-| ID | 지표명 | 설명 | Bloomberg 티커 | 스트레스 방향 |
-|----|--------|------|----------------|--------------|
-| EQ1 | 코스피 수익률 | 코스피 주간 수익률 | `KOSPI Index` | 하락 ↓ |
-| EQ2 | 코스피 변동성 | VKOSPI (코스피200 내재변동성) | `VKOSPI Index` | 상승 ↑ |
-| EQ3 | 시장 비유동성 | Amihud 비유동성 비율 | `KOSPI Index` (가격, 거래량) | 상승 ↑ |
+### 2-2. 13개 raw -> 15개 지표
 
-### 4. 외환시장 (FX Market)
+아래 15개가 실제 CISS 입력 지표입니다.
 
-| ID | 지표명 | 설명 | Bloomberg 티커 | 스트레스 방향 |
-|----|--------|------|----------------|--------------|
-| FX1 | 원/달러 수익률 | USD/KRW 주간 변화율 | `USDKRW Curncy` | 상승 (원화약세) ↑ |
-| FX2 | 환율 변동성 | 원/달러 1개월 내재변동성 | `USDKRWV1M BGN Curncy` | 상승 ↑ |
-| FX3 | CRS 베이시스 | 1년 통화스왑 금리 (달러 조달비용) | `KWSWNI1 Curncy` | 하락 ↓ |
+Money Market
+- `MM1 = KWCDC_Curncy` (91일 CD 금리의 절대 수준)
+- `MM2 = KWCDC_Curncy - GVSK3M_Index` (CD 금리와 국고채 3개월 금리의 차이)
+- `MM3 = rolling_std(diff(KWCDC_Curncy), 20) * sqrt(252)` (CD 금리 변화의 20일 연율화 변동성)
 
-### 5. 금융중개기관 (Financial Intermediaries)
+Bond Market
+- `BD1 = -(GVSK10YR_Index - GVSK3YR_Index)` (국고채 10년-3년 스프레드를 반전한 값)  
+  `10Y-3Y` 스프레드가 줄거나 역전될수록 스트레스가 높다고 보고 부호를 반전합니다.
+- `BD2 = KWCDC_Curncy - GVSK3YR_Index` (CD 금리와 국고채 3년 금리의 차이)
+- `BD3 = MOVE_Index` (채권시장 변동성 지수 수준)
 
-| ID | 지표명 | 설명 | Bloomberg 티커 | 스트레스 방향 |
-|----|--------|------|----------------|--------------|
-| FI1 | 국가 CDS | 한국 5년 CDS 스프레드 | `CKREA1U5 CBGN Curncy` | 상승 ↑ |
-| FI2 | 금융업종 변동성 | 금융업종 지수 20일 실현변동성 | `KOSPFIN Index` | 상승 ↑ |
-| FI3 | 금융업종 상대성과 | 금융업종 수익률 - 코스피 수익률 | `KOSPFIN` - `KOSPI` | 언더퍼폼 ↓ |
+Equity Market
+- `EQ1 = -pct_change(KOSPI_Index)` (코스피 수익률을 반전한 값, 하락일수록 스트레스)  
+  주가 하락이 스트레스이므로 수익률 부호를 반전합니다.
+- `EQ2 = VKOSPI_Index` (코스피 내재변동성 수준)
+- `EQ3 = rolling_mean(abs(pct_change(KOSPI_Index)) / KOSPI_Index_VOLUME * 1e12, 20)` (아미후드 비유동성의 20일 평균)
 
----
+FX Market
+- `FX1 = pct_change(USDKRW_Curncy)` (원/달러 환율 수익률, 원화 약세 방향이 스트레스)
+- `FX2 = USDKRWV1M_BGN_Curncy` (원/달러 1개월 내재변동성 수준)
+- `FX3 = -KWSWNI1_Curncy` (1년 CRS 수준을 반전한 값, 낮아질수록 스트레스)
 
-## 계산 방식
+Financial Intermediaries
+- `FI1 = CKREA1U5_CBGN_Curncy` (한국 5년 CDS 프리미엄 수준)
+- `FI2 = rolling_std(pct_change(KOSPFIN_Index), 20) * sqrt(252) * 100` (금융업종 수익률의 20일 연율화 변동성)
+- `FI3 = -(pct_change(KOSPFIN_Index) - pct_change(KOSPI_Index))` (금융업종 상대수익률 반전값)  
+  금융업종 언더퍼폼을 스트레스로 보아 부호를 반전합니다.
 
-### 1단계: 데이터 수집
-```
-Bloomberg BDH API → 일별 원본 데이터 → 주간(금요일 기준) 리샘플링
-```
+### 2-3. ECDF 정규화
 
-### 2단계: 지표 변환
+각 지표를 ECDF로 `[0, 1]` 범위로 변환합니다.
 
-각 원본 데이터를 스트레스 지표로 변환:
+`ECDF_i(x) = (# of sample values <= x) / N`
 
-| 변환 유형 | 공식 | 설명 |
-|----------|------|------|
-| 수준 (level) | 원본값 그대로 | 값이 클수록 스트레스 |
-| 스프레드 (spread) | A - B | 스프레드 확대 = 스트레스 |
-| 수익률 (return) | (P_t / P_{t-1}) - 1 | 하락 = 스트레스 (반전 적용) |
-| 실현변동성 | 20일 표준편차 × √252 | 변동성 증가 = 스트레스 |
-| 비유동성 | \|수익률\| / 거래량 | 비유동성 증가 = 스트레스 |
+- 값이 1에 가까울수록 "역사적으로 높은 스트레스"
+- 값이 0에 가까울수록 "역사적으로 낮은 스트레스"
 
-### 3단계: ECDF 정규화
+코드상 `fit_transform`은 현재 데이터 구간 전체를 샘플로 사용합니다.
 
-각 지표를 [0, 1] 범위로 변환:
+## 3) 5개 분야를 어떻게 합치는가
 
-```
-ECDF(x) = (x보다 작거나 같은 관측치 수) / (전체 관측치 수)
-```
+통합 코드는 `src/ciss_calculator.py`에 있습니다.
 
-- **0에 가까움** = 역사적으로 낮은 스트레스 수준
-- **1에 가까움** = 역사적으로 높은 스트레스 수준
+### 3-1. 분야 구성
 
-### 4단계: 동적 상관행렬 추정
+- 분야 수: 5개
+- 각 분야 지표 수: 3개
+- 분야 가중치: 모두 `0.20`
 
-EWMA(지수가중이동평균) 방식으로 시변 상관행렬 추정:
+즉 지표 단위 가중치는 기본적으로 `0.20 / 3`이며, 총합이 1이 되도록 정규화합니다.
 
-```
-공분산_t = λ × 공분산_{t-1} + (1-λ) × (수익률_t × 수익률_t')
-```
-- λ = 0.94 (감쇠계수)
+### 3-2. 상관효과 계산
 
-### 5단계: CISS 스코어 계산
+상관행렬 `C_t`는 `src/dcc_garch.py`에서 계산합니다.
 
-**CISS 공식:**
+- `ewma`: 기본 대안
+- `dcc`: `arch` 패키지 필요
 
-```
-CISS_t = (가중평균 스트레스) × (상관 증폭 효과)
-       = (w' × s_t) × √(w' × C_t × w)
-```
+상관효과:
 
-- `s_t`: ECDF 변환된 15개 지표 벡터
-- `w`: 섹터 가중치 (각 20%)
-- `C_t`: 시점 t의 상관행렬
-- `√(w' × C_t × w)`: **상관 증폭 효과**
+`Correlation_Effect_t = sqrt(w' * C_t * w)`
 
-**상관 증폭 효과 해석:**
-- 지표들 간 상관이 높을수록 → CISS 값 증가
-- 위기 시 여러 시장이 동시에 스트레스를 받으면 시스템 리스크 증폭
+### 3-3. 최종 CISS
 
----
+ECDF 지표 벡터를 `s_t`라고 하면:
 
-## 프로젝트 구조
+`CISS_t = (w' * s_t) * Correlation_Effect_t`
 
-```
-risk_scoring/
-├── config/
-│   └── indicator_spec.yaml    # 지표 설정
-├── src/
-│   ├── data_loader.py         # Bloomberg 데이터 수집
-│   ├── transforms.py          # 지표 변환 & ECDF
-│   ├── dcc_garch.py           # 동적 상관행렬
-│   ├── ciss_calculator.py     # CISS 계산
-│   └── main.py                # 메인 파이프라인
-├── scripts/
-│   └── data_validation.py     # 데이터 검증
-├── output/                    # 결과 저장
-└── README.md
-```
+즉,
+1. 지표들의 가중 평균 스트레스 `w' * s_t`를 만들고
+2. 동시변동(상관) 정도 `sqrt(w' * C_t * w)`로 증폭/완화합니다.
 
----
+### 3-4. 5개 분야 기여도
 
-## 사용법
+분야 `k`의 기여도는:
 
-### 설치
+`Contribution_{k,t} = Correlation_Effect_t * sum_{i in k}(w_i * s_{i,t})`
 
-```bash
-pip install xbbg pandas numpy scipy arch
-```
+현재 구현은 아래를 만족합니다.
 
-### 실행
+`sum(5개 분야 기여도) == CISS`
 
-```python
-from src.main import CISSPipeline
+## 4) 실제 코드 실행 흐름
 
-# 파이프라인 생성
-pipeline = CISSPipeline(
-    start_date='2024-01-01',
-    dcc_method='ewma'  # 또는 'dcc'
-)
+`src/main.py`의 `CISSPipeline.run()` 기준:
 
-# 실행
-ciss_result = pipeline.run()
+1. `load_raw_data()` 호출  
+2. `compute_indicators()` 호출  
+3. `compute_dynamic_correlations()` 호출  
+4. `compute_ciss_score()` 호출  
+5. 결과 저장 (`src/output/*.csv`)
 
-# 요약 출력
-pipeline.print_summary()
-
-# 결과 저장
-pipeline.save_results('output')
-```
-
-### 커맨드라인
+## 5) 실행 방법
 
 ```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 cd src
 python main.py
 ```
 
----
+## 6) 출력 파일
 
-## 출력 예시
-
-```
-==============================================================
- CISS SUMMARY
-==============================================================
-
- Date: 2026-01-24
- CISS Score: 0.4523
- Correlation Effect: 0.8912
-
- Sector Contributions:
-   Money_Market                  : 0.0821 ████
-   Bond_Market                   : 0.0934 ████
-   Equity_Market                 : 0.1102 █████
-   FX_Market                     : 0.0876 ████
-   Financial_Intermediaries      : 0.0790 ███
-
- Statistics (Full Period):
-   Mean:   0.4215
-   Std:    0.0892
-   Min:    0.2134
-   Max:    0.6521
-   Latest: 0.4523
-
- Risk Level: MODERATE
-==============================================================
-```
-
----
-
-## 리스크 레벨 해석
-
-| CISS 범위 | 레벨 | 해석 | 권장 조치 |
-|-----------|------|------|----------|
-| 0.0 - 0.3 | 낮음 (LOW) | 정상적인 시장 상황 | 일반적인 포지션 유지 |
-| 0.3 - 0.5 | 보통 (MODERATE) | 다소 상승된 스트레스 | 모니터링 강화 |
-| 0.5 - 0.7 | 경계 (ELEVATED) | 주의 필요 | 리스크 축소 검토 |
-| 0.7 - 1.0 | 위험 (HIGH) | 시스템 리스크 경고 | 방어적 포지션 전환 |
-
----
-
-## 참고 문헌
-
-- Holló, D., Kremer, M., & Lo Duca, M. (2012). "CISS - A Composite Indicator of Systemic Stress in the Financial System." ECB Working Paper No. 1426.
-- Engle, R. (2002). "Dynamic Conditional Correlation: A Simple Class of Multivariate GARCH Models." Journal of Business & Economic Statistics.
-
----
-
-## License
-
-MIT License
+- `src/output/raw_indicators.csv`: 가공된 15개 raw 지표
+- `src/output/ecdf_indicators.csv`: ECDF 정규화 지표
+- `src/output/ciss_results.csv`: `CISS`, `Correlation_Effect`, 5개 분야 기여도
+- `src/output/historical_ciss.csv`: CISS 히스토리

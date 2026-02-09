@@ -18,6 +18,8 @@ class IndicatorTransformer:
 
     def transform_all(self, df: pd.DataFrame) -> pd.DataFrame:
         """모든 지표 변환 수행"""
+        # 결측치 forward-fill 처리
+        df = df.ffill()
         indicators = pd.DataFrame(index=df.index)
 
         # Money Market (MM1, MM2, MM3)
