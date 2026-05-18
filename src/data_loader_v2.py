@@ -237,7 +237,7 @@ class MultiSourceDataLoader:
         crs1y  = self._safe(self.ecos.fetch, 'CRS_1Y',  self.start_date, self.end_date)
 
         cols['KWCDC_Curncy']    = cd
-        cols['GVSK3M_Index']    = ktb3m
+        cols['GVSK3M_Index']    = ktb3m if not ktb3m.empty else ktb3y
         cols['GVSK3YR_Index']   = ktb3y
         cols['GVSK10YR_Index']  = ktb10y
         cols['USDKRW_Curncy']   = usdkrw if not usdkrw.empty else \

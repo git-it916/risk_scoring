@@ -129,7 +129,7 @@ class CISSPipelineV2:
             },
         }
 
-    def save_results(self, output_dir: str = 'output_v2'):
+    def save_results(self, output_dir: str = 'output_v2', historical_dir: str = None):
         os.makedirs(output_dir, exist_ok=True)
 
         ciss_path = os.path.join(output_dir, 'ciss_results.csv')
@@ -149,7 +149,12 @@ class CISSPipelineV2:
         print(f"[INFO] Raw data saved to: {raw_path}")
 
         # 전체 기간 누적 저장 (main.py와 동일 포맷)
-        historical_path = os.path.join(output_dir, 'historical_ciss.csv')
+        if historical_dir:
+            os.makedirs(historical_dir, exist_ok=True)
+            historical_path = os.path.join(historical_dir, 'historical_ciss.csv')
+        else:
+            historical_path = os.path.join(output_dir, 'historical_ciss.csv')
+        
         cols_to_save = [
             'CISS', 'Correlation_Effect',
             'Money_Market_Contribution', 'Bond_Market_Contribution',
@@ -206,7 +211,10 @@ def main():
     )
     pipeline.run(verbose=True)
     pipeline.print_summary()
-    pipeline.save_results('output_v2')
+    
+    # historical_ciss 저장 위치 설정
+    historical_dir = r'C:\Users\10845\Documents\quant_project\[오전] korea risk score'
+    pipeline.save_results('output_v2', historical_dir=historical_dir)
     return pipeline
 
 

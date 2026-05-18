@@ -12,7 +12,7 @@ import os
 import sys
 
 # 모듈 임포트
-from data_loader import load_raw_data, BloombergDataLoader
+from data_loader_v2 import load_raw_data_v2
 from transforms import compute_indicators, IndicatorTransformer, ECDFTransformer
 from dcc_garch import compute_dynamic_correlations
 from ciss_calculator import compute_ciss_score, CISSCalculator
@@ -61,8 +61,8 @@ class CISSPipeline:
 
         # Step 1: 데이터 수집
         if verbose:
-            print("\n[Step 1/4] Loading Bloomberg data...")
-        self.daily_data, self.weekly_data = load_raw_data(
+            print("\n[Step 1/4] Loading data from ECOS/FRED...")
+        self.daily_data, self.weekly_data = load_raw_data_v2(
             self.start_date, self.end_date
         )
         if verbose:
