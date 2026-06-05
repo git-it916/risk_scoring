@@ -17,6 +17,10 @@ from transforms import compute_indicators, IndicatorTransformer, ECDFTransformer
 from dcc_garch import compute_dynamic_correlations
 from ciss_calculator import compute_ciss_score, CISSCalculator
 
+# 프로젝트 루트(이 파일의 상위 폴더) 기준 output 경로 — 실행 위치/PC에 무관하게 고정
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+OUTPUT_DIR = os.path.join(REPO_ROOT, 'output')
+
 
 class CISSPipeline:
     """CISS 계산 전체 파이프라인"""
@@ -135,7 +139,7 @@ class CISSPipeline:
             }
         }
 
-    def save_results(self, output_dir: str = 'output'):
+    def save_results(self, output_dir: str = OUTPUT_DIR):
         """결과 저장"""
         os.makedirs(output_dir, exist_ok=True)
 
@@ -231,7 +235,7 @@ def main():
     pipeline.print_summary()
 
     # 결과 저장
-    pipeline.save_results('output')
+    pipeline.save_results(OUTPUT_DIR)
 
     return pipeline
 

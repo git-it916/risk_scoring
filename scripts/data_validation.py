@@ -378,11 +378,13 @@ def run_full_validation():
         icon = {'OK': '[OK]', 'NO_DATA': '[X]', 'ERROR': '[!]'}.get(status, '[?]')
         print(f"   {icon} {status}: {count}")
 
-    # Save results to CSV
-    output_path = 'output/validation_results.csv'
+    # Save results to CSV (프로젝트 루트 기준 output 폴더로 고정)
+    import os
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    output_dir = os.path.join(repo_root, 'output')
+    output_path = os.path.join(output_dir, 'validation_results.csv')
     try:
-        import os
-        os.makedirs('output', exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
         summary_df.to_csv(output_path, index=False, encoding='utf-8-sig')
         print(f"\n[INFO] Results saved to: {output_path}")
     except Exception as e:

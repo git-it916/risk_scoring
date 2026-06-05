@@ -25,6 +25,10 @@ from transforms import compute_indicators
 from dcc_garch import compute_dynamic_correlations
 from ciss_calculator import compute_ciss_score
 
+# 프로젝트 루트(이 파일의 상위 폴더) 기준 output 경로 — 실행 위치/PC에 무관하게 고정
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+OUTPUT_DIR = os.path.join(REPO_ROOT, 'output_v2')
+
 
 class CISSPipelineV2:
     """무료 API 데이터로 동작하는 CISS 파이프라인."""
@@ -129,7 +133,7 @@ class CISSPipelineV2:
             },
         }
 
-    def save_results(self, output_dir: str = 'output_v2', historical_dir: str = None):
+    def save_results(self, output_dir: str = OUTPUT_DIR, historical_dir: str = None):
         os.makedirs(output_dir, exist_ok=True)
 
         ciss_path = os.path.join(output_dir, 'ciss_results.csv')
@@ -212,9 +216,8 @@ def main():
     pipeline.run(verbose=True)
     pipeline.print_summary()
     
-    # historical_ciss 저장 위치 설정
-    historical_dir = r'C:\Users\10845\Documents\quant_project\[오전] korea risk score'
-    pipeline.save_results('output_v2', historical_dir=historical_dir)
+    # historical_ciss 저장 위치 설정 (기본: output_v2 폴더에 함께 저장)
+    pipeline.save_results(OUTPUT_DIR)
     return pipeline
 
 
