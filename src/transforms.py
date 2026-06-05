@@ -47,7 +47,27 @@ class IndicatorTransformer:
         indicators['FI2'] = self._fi2_fin_volatility(df)
         indicators['FI3'] = self._fi3_fin_relative_return(df)
 
-        return indicators.dropna()
+        cleaned = indicators.dropna()
+        if cleaned.empty:
+            non_null = indicators.notna().sum()
+            empty_indicators = non_null[non_null == 0].index.tolist()
+            first_valid = indicators.apply(lambda s: s.first_valid_index())
+            last_valid = indicators.apply(lambda s: s.last_valid_index())
+            details = [
+                f"raw rows={len(df)}",
+                f"raw date range={df.index.min()} ~ {df.index.max()}",
+                f"indicator non-null counts={non_null.to_dict()}",
+                f"all-NaN indicators={empty_indicators}",
+                f"first valid={first_valid.to_dict()}",
+                f"last valid={last_valid.to_dict()}",
+            ]
+            raise ValueError(
+                "No complete indicator observations after dropna(). "
+                "At least one required raw series is missing or the date overlap "
+                "between series is empty. " + "; ".join(details)
+            )
+
+        return cleaned
 
     # =========================================================================
     # Money Market Indicators

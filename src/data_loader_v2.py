@@ -247,6 +247,9 @@ class MultiSourceDataLoader:
         # --- FRED: US 10Y ---
         print("[INFO] Fetching FRED (US 10Y)...")
         us10y = self._safe(self.fred.fetch, 'US_10Y', self.start_date, self.end_date)
+        if us10y.empty:
+            print("  [FRED] US_10Y unavailable; trying yfinance ^TNX fallback")
+            us10y = fetch_yfinance('^TNX', self.start_date, self.end_date, 'Close')
 
         # --- yfinance: MOVE, KOSPI, 금융업종 ---
         print("[INFO] Fetching yfinance (MOVE, KOSPI, 금융 ETF)...")
@@ -274,6 +277,9 @@ class MultiSourceDataLoader:
             joined = pd.concat([ktb10y, us10y], axis=1).ffill()
             joined.columns = ['kr', 'us']
             cols['CKREA1U5_CBGN_Curncy'] = (joined['kr'] - joined['us']) * 100
+        elif not ktb10y.empty:
+            print("  [Proxy] US 10Y unavailable; using KTB 10Y level as FI1 fallback")
+            cols['CKREA1U5_CBGN_Curncy'] = ktb10y * 100
         else:
             cols['CKREA1U5_CBGN_Curncy'] = pd.Series(dtype=float)
 

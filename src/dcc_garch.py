@@ -63,6 +63,12 @@ class DCCEstimator:
         Args:
             df: ECDF 변환된 지표 데이터
         """
+        if df is None or df.empty:
+            raise ValueError(
+                "ecdf_data is empty; cannot estimate dynamic correlations. "
+                "Check indicator generation and raw data coverage first."
+            )
+
         if self.method == 'dcc':
             if not HAS_ARCH:
                 raise RuntimeError(
@@ -139,6 +145,10 @@ class DCCEstimator:
         data = df.dropna().values
         T, n = data.shape
         cols = df.columns.tolist()
+        if T < 2:
+            raise ValueError(
+                f"Need at least 2 complete ECDF observations for EWMA correlation; got {T}."
+            )
 
         # EWMA 공분산 행렬 계산
         correlations = np.zeros((T, n, n))
